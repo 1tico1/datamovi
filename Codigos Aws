@@ -1,0 +1,276 @@
+import sys
+
+from awsglue.transforms import *
+
+from awsglue.utils import getResolvedOptions
+
+from pyspark.context import SparkContext
+
+from awsglue.context import GlueContext
+
+from awsglue.job import Job
+
+from awsgluedq.transforms import EvaluateDataQuality
+ 
+args = getResolvedOptions(sys.argv, ['JOB_NAME'])
+
+sc = SparkContext()
+
+glueContext = GlueContext(sc)
+
+spark = glueContext.spark_session
+
+job = Job(glueContext)
+
+job.init(args['JOB_NAME'], args)
+ 
+# Default ruleset used by all target nodes with data quality enabled
+
+DEFAULT_DATA_QUALITY_RULESET = """
+
+    Rules = [
+
+        ColumnCount > 0
+
+    ]
+
+"""
+ 
+# Script generated for node Amazon S3
+
+AmazonS3_node1758254201036 = glueContext.create_dynamic_frame.from_options(format_options={"quoteChar": "\"", "withHeader": True, "separator": ",", "optimizePerformance": False}, connection_type="s3", format="csv", connection_options={"paths": ["s3://datamovi/df_t1.csv"], "recurse": True}, transformation_ctx="AmazonS3_node1758254201036")
+ 
+# Script generated for node Drop Fields
+
+DropFields_node1758256432740 = DropFields.apply(frame=AmazonS3_node1758254201036, paths=["fk_departure_ota_bus_company"], transformation_ctx="DropFields_node1758256432740")
+ 
+# Script generated for node Amazon S3
+
+EvaluateDataQuality().process_rows(frame=DropFields_node1758256432740, ruleset=DEFAULT_DATA_QUALITY_RULESET, publishing_options={"dataQualityEvaluationContext": "EvaluateDataQuality_node1758256063076", "enableDataQualityResultsPublishing": True}, additional_options={"dataQualityResultsPublishing.strategy": "BEST_EFFORT", "observations.scope": "ALL"})
+
+AmazonS3_node1758256502916 = glueContext.write_dynamic_frame.from_options(frame=DropFields_node1758256432740, connection_type="s3", format="glueparquet", connection_options={"path": "s3://datamovi-tratado", "partitionKeys": []}, format_options={"compression": "snappy"}, transformation_ctx="AmazonS3_node1758256502916")
+ 
+job.commit()
+ 
+import sys
+
+from awsglue.transforms import *
+
+from awsglue.utils import getResolvedOptions
+
+from pyspark.context import SparkContext
+
+from awsglue.context import GlueContext
+
+from awsglue.job import Job
+
+from pyspark.sql.functions import datediff, current_date, when, sum
+ 
+# Inicializa o contexto do Glue
+
+args = getResolvedOptions(sys.argv, ['JOB_NAME'])
+
+sc = SparkContext()
+
+glueContext = GlueContext(sc)
+
+spark = glueContext.spark_session
+
+job = Job(glueContext)
+
+job.init(args['JOB_NAME'], args)
+ 
+# Fonte de dados - Este é o nó de entrada do seu job no Glue
+
+# Substitua "datamovi-database" e "date_purchase" pelos nomes corretos da sua tabela
+
+datasource0 = glueContext.create_dynamic_frame.from_catalog(
+
+    database="datamovi-database",
+
+    table_name="date_purchase",
+
+    transformation_ctx="datasource0"
+
+)
+ 
+# Converte o DynamicFrame para um DataFrame do Spark
+
+df = datasource0.toDF()
+ 
+# --- Lógica de Negócio ---
+ 
+# Calcula os dias desde a última compra
+
+df = df.withColumn(
+
+    "dias_inativos",
+
+    datediff(current_date(), df.date_purchase)
+
+)
+ 
+# Agrupa por cliente e calcula o valor total gasto e a data da última compra
+
+df_agg = df.groupBy("fk_contact").agg(
+
+    sum("gmv_success").alias("valor_total_gasto"),
+
+    max("date_purchase").alias("ultima_compra")
+
+)
+ 
+# Classifica os clientes com base nos dias de inatividade e valor gasto
+
+df_classificado = df_agg.withColumn(
+
+    "perfil_cliente",
+
+    when(datediff(current_date(), df_agg.ultima_compra) >= 30,
+
+         when(df_agg.valor_total_gasto >= 1000, "Inativo de Alto Valor")
+
+         .otherwise("Inativo de Baixo Valor"))
+
+    .otherwise("Ativo")
+
+)
+ 
+# --- Fim da Lógica de Negócio ---
+ 
+# Converte de volta para DynamicFrame para salvar no destino
+
+from awsglue.dynamicframe import DynamicFrame
+
+output_dyf = DynamicFrame.fromDF(df_classificado, glueContext, "output_dyf")
+ 
+# Define o destino (o nó de saída do seu job)
+
+glueContext.write_dynamic_frame.from_options(
+
+    frame=output_dyf,
+
+    connection_type="s3",
+
+    connection_options={"path": "s3://datamovi-tratado", "partitionKeys": []},
+
+    format="parquet",
+
+    transformation_ctx="datasink0"
+
+)
+ 
+job.commit()
+ 
+df = ...
+ 
+df_renomeado = df.withColumnRenamed("fk_contact", "id_cliente") \
+
+                 .withColumnRenamed("date_purchase", "data_compra") \
+
+                 .withColumnRenamed("gmv_success", "valor_total") \
+
+                 .withColumnRenamed("place_origin_departure", "origem_ida") \
+
+                 .withColumnRenamed("place_destination_departure", "destino_ida") \
+
+                 .withColumnRenamed("fk_departure_ota_bus_company", "viacao_ida")
+ 
+SELECT
+
+  *,
+
+  CASE
+
+    WHEN date_diff('day', CAST(date_purchase AS date), current_date) > 30 THEN 'Inativo'
+
+    ELSE 'Ativo'
+
+  END AS status_cliente
+
+FROM
+
+  datamovi
+ 
+CREATE VIEW clientes_inativos_view AS
+
+SELECT
+
+  fk_contact,
+
+  MAX(date_purchase) AS ultima_compra,
+
+  SUM(gmv_success) AS valor_total_gasto
+
+FROM
+
+  datamovi
+
+GROUP BY
+
+  fk_contact
+
+HAVING
+
+  date_diff('day', MAX(date_purchase), current_date) > 30
+ 
+CREATE VIEW potencial_clientes_view AS
+
+SELECT
+
+  fk_contact,
+
+  SUM(gmv_success) AS valor_total_gasto,
+
+  CASE
+
+    WHEN date_diff('day', MAX(CAST(date_purchase AS date)), current_date) > 30 AND SUM(gmv_success) > 5000 THEN 'Ouro'
+
+    WHEN date_diff('day', MAX(CAST(date_purchase AS date)), current_date) > 30 AND SUM(gmv_success) > 1000 THEN 'Prata'
+
+    WHEN date_diff('day', MAX(CAST(date_purchase AS date)), current_date) > 30 AND SUM(gmv_success) <= 1000 THEN 'Bronze'
+
+    ELSE 'Ativo'
+
+  END AS potencial_cliente
+
+FROM
+
+  datamovi
+
+GROUP BY
+
+  fk_contact
+ 
+REATE VIEW top_10_clientes_inativos AS
+
+SELECT
+
+  fk_contact,
+
+  MAX(date(date_purchase)) AS ultima_compra,
+
+  SUM(gmv_success) AS valor_total_gasto
+
+FROM
+
+  datamovi
+
+WHERE
+
+  gmv_success > 0
+
+GROUP BY
+
+  fk_contact
+
+HAVING
+
+  date_diff('day', MAX(date(date_purchase)), current_date) > 30
+
+ORDER BY
+
+  valor_total_gasto DESC
+
+LIMIT 10
+ 
